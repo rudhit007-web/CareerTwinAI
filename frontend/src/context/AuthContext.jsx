@@ -1,59 +1,121 @@
 import { createContext, useContext, useState, useEffect, useCallback } from 'react'
-import axios from 'axios'
+import api from '../pages/api/client'
 
 const AuthContext = createContext(null)
 
 export function AuthProvider({ children }) {
-  const [user,  setUser]  = useState(null)
+  const [user, setUser] = useState(null)
   const [token, setToken] = useState(() => localStorage.getItem('ct_token'))
   const [loading, setLoading] = useState(true)
 
+  // Restore login session when the application starts
   useEffect(() => {
-    if (token) {
-      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`
-      axios.get('/api/auth/me')
-        .then(r => setUser(r.data))
-        .catch(() => logout())
-        .finally(() => setLoading(false))
-    } else {
-      setLoading(false)
+    let mounted = true
+
+    const restoreSession = async () => {
+      const savedToken = localStorage.getItem('ct_token')
+
+      if (!savedToken) {
+        if (mounted) {
+          setUser(null)
+          setLoading(false)
+        }
+        return
+      }
+
+      try {
+        const response = await api.get('/auth/me')
+
+        if (mounted) {
+          setUser(response.data)
+          setToken(savedToken)
+        }
+      } catch (error) {
+        console.error('Session restore failed:', error)
+
+        localStorage.removeItem('ct_token')
+
+        if (mounted) {
+          setToken(null)
+          setUser(null)
+        }
+      } finally {
+        if (mounted) {
+          setLoading(false)
+        }
+      }
     }
-  }, [token])
 
+    restoreSession()
+
+    return () => {
+      mounted = false
+    }
+  }, [])
+
+  // Login
   const login = useCallback(async (email, password) => {
-    const form = new URLSearchParams({ username: email, password })
-    const res = await axios.post('/api/auth/login', form, {
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    const form = new URLSearchParams({
+      username: email,
+      password: password,
     })
-    const { access_token, ...userData } = res.data
+
+    const response = await api.post('/auth/login', form, {
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+    })
+
+    const { access_token, ...userData } = response.data
+
+    // Save JWT
     localStorage.setItem('ct_token', access_token)
-    axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`
+
+    // Update React authentication state
     setToken(access_token)
     setUser(userData)
-    return res.data
+
+    return response.data
   }, [])
 
+  // Register
   const register = useCallback(async (email, fullName, password) => {
-    const res = await axios.post('/api/auth/register', {
-      email, full_name: fullName, password,
+    const response = await api.post('/auth/register', {
+      email,
+      full_name: fullName,
+      password,
     })
-    const { access_token, ...userData } = res.data
+
+    const { access_token, ...userData } = response.data
+
+    // Save JWT
     localStorage.setItem('ct_token', access_token)
-    axios.defaults.headers.common['Authorization'] = `Bearer ${access_token}`
+
+    // Update React authentication state
     setToken(access_token)
     setUser(userData)
-    return res.data
+
+    return response.data
   }, [])
 
+  // Logout
   const logout = useCallback(() => {
     localStorage.removeItem('ct_token')
-    delete axios.defaults.headers.common['Authorization']
     setToken(null)
     setUser(null)
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, token, loading, login, register, logout }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        token,
+        loading,
+        login,
+        register,
+        logout,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   )
